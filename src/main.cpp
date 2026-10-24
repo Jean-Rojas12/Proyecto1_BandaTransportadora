@@ -7,10 +7,10 @@
 #include "hal_motor.h"
 #include "fsm_control.h"
 
-// Pin del paro de emergencia
+// Pin del interruptor de emergencia
 constexpr uint8_t PIN_EMERGENCIA = 33;
 
-// Antirrebote de 25 ms a 160 MHz
+// Tiempo antirrebote: 25 ms a 160 MHz
 constexpr uint32_t REBOTE_CICLOS = 4000000UL;
 
 // Variables compartidas con la interrupcion
@@ -18,10 +18,10 @@ volatile bool eventoEmergencia = false;
 volatile uint32_t contadorPulsaciones = 0;
 volatile uint32_t ultimoCiclo = 0;
 
-// Proteccion de variables compartidas
+// Spinlock para proteger las variables
 portMUX_TYPE spinlock = portMUX_INITIALIZER_UNLOCKED;
 
-// Interrupcion del boton de emergencia
+// Interrupcion del paro de emergencia
 void IRAM_ATTR emergenciaISR() {
 
     uint32_t cicloActual = XTHAL_GET_CCOUNT();
@@ -44,9 +44,13 @@ void setup() {
 
     Serial.begin(115200);
 
+    // Configurar interruptor
     pinMode(PIN_EMERGENCIA, INPUT_PULLUP);
 
+    // Inicializar motor
     motorInit();
+
+    // Inicializar maquina de estados
     fsmInit();
 
     // Configurar interrupcion
@@ -57,12 +61,11 @@ void setup() {
     );
 
     Serial.println("SISTEMA INICIADO");
-    Serial.println("Comandos disponibles:");
     Serial.println("A = Arrancar banda");
     Serial.println("P = Parar banda");
     Serial.println("R = Reiniciar sistema");
 
-    // Comprobar emergencia al encender
+    // Verificar emergencia al encender
     if (digitalRead(PIN_EMERGENCIA) == LOW) {
         fsmProcesar(Evento::EMERGENCY);
     }
@@ -74,7 +77,7 @@ void loop() {
     bool emergenciaPendiente = false;
     uint32_t totalPulsaciones = 0;
 
-    // Leer variables protegidas
+    // Leer variables de forma segura
     portENTER_CRITICAL(&spinlock);
 
     emergenciaPendiente = eventoEmergencia;
@@ -83,7 +86,7 @@ void loop() {
 
     portEXIT_CRITICAL(&spinlock);
 
-    // Prioridad del paro de emergencia
+    // Comprobar paro de emergencia
     if (emergenciaPendiente ||
         digitalRead(PIN_EMERGENCIA) == LOW) {
 
@@ -91,7 +94,7 @@ void loop() {
 
             fsmProcesar(Evento::EMERGENCY);
 
-            Serial.print("Pulsaciones: ");
+            Serial.print("Total de pulsaciones: ");
             Serial.println(totalPulsaciones);
         }
     }
@@ -103,32 +106,55 @@ void loop() {
 
         switch (comando) {
 
+            // Arrancar banda
             case 'A':
             case 'a':
 
-                if (digitalRead(PIN_EMERGENCIA) == HIGH &&
-                    fsmObtenerEstado() == Estado::IDLE) {
-
+                if (digitalRead(PIN_EMERGENCIA) == LOW) {
+                    fsmProcesar(Evento::EMERGENCY);
+                    Serial.println(
+                        "No se puede arrancar: emergencia activa"
+                    );
+                }
+                else if (fsmObtenerEstado() == Estado::FAULT) {
+                    Serial.println(
+                        "Debe reiniciar el sistema primero"
+                    );
+                }
+                else if (fsmObtenerEstado() == Estado::IDLE) {
                     fsmProcesar(Evento::START);
                 }
+                else {
+                    Serial.println(
+                        "La banda ya esta funcionando"
+                    );
+                }
+
                 break;
 
+            // Parar banda
             case 'P':
             case 'p':
 
                 if (fsmObtenerEstado() == Estado::RUNNING) {
                     fsmProcesar(Evento::TIMEOUT);
                 }
+
                 break;
 
+            // Reiniciar sistema
             case 'R':
             case 'r':
 
                 if (digitalRead(PIN_EMERGENCIA) == HIGH) {
                     fsmProcesar(Evento::RESET);
-                } else {
-                    Serial.println("Libere la emergencia");
                 }
+                else {
+                    Serial.println(
+                        "Libere la emergencia"
+                    );
+                }
+
                 break;
 
             default:

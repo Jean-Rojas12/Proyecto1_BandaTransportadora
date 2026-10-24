@@ -25,10 +25,13 @@ void accionFalla() {
     Serial.println("Paro de emergencia activado");
 }
 
+
 void accionReiniciar() {
-    motorLibre();
-    Serial.println("Sistema reiniciado");
+    motorStop();
+    Serial.println("Emergencia liberada");
+    Serial.println("Sistema listo para un nuevo arranque");
 }
+
 
 // Accion que no modifica el motor
 static void sinAccion() {
