@@ -1,0 +1,42 @@
+
+# Proyecto 1: Controlador de Banda Transportadora
+
+## Descripción
+Este proyecto consiste en desarrollar un firmware para controlar una banda transportadora mediante una IdeaBoard ESP32, utilizando PWM, interrupciones y una máquina de estados finitos (FSM).
+
+## Objetivo
+Controlar el arranque y la detención de un motor DC, incorporando un interruptor de emergencia y un sistema de antirrebote.
+
+## Componentes
+- IdeaBoard ESP32
+- Motor DC
+- Puente H L9110S
+- Microinterruptor de emergencia
+- Fuente de alimentación de 5 V / 3 A
+
+## Configuración
+- GPIO12: motor A
+- GPIO14: motor B
+- GPIO33: emergencia
+- PWM: 1000 Hz
+- Resolución: 10 bits
+- Antirrebote: 25 ms
+
+## Máquina de estados
+- IDLE: motor detenido.
+- RUNNING: motor funcionando.
+- FAULT: emergencia activada.
+
+## Comandos
+- A: arrancar.
+- P: detener.
+- R: reiniciar.
+
+## Organización del código
+- src/main.cpp: programa principal e interrupción.
+- src/hal_motor.cpp: control PWM del motor.
+- src/fsm_control.cpp: máquina de estados.
+- include/: archivos de cabecera.
+
+## Verificación
+El proyecto se compiló correctamente mediante PlatformIO. No se realizaron pruebas físicas.
