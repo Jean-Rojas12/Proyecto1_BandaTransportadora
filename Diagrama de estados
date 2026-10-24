@@ -1,0 +1,32 @@
+
+# Diagrama de estados - Banda transportadora
+
+El sistema utiliza tres estados: IDLE, RUNNING y FAULT.
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+
+    IDLE --> RUNNING: START
+    RUNNING --> IDLE: TIMEOUT
+    IDLE --> FAULT: EMERGENCY
+    RUNNING --> FAULT: EMERGENCY
+    FAULT --> IDLE: RESET
+
+    RUNNING --> RUNNING: START
+    FAULT --> FAULT: START
+```
+
+## Descripcion de los estados
+
+IDLE: La banda permanece detenida y lista para arrancar.
+
+RUNNING: El motor funciona mediante PWM.
+
+FAULT: El sistema detecta una emergencia, detiene el motor y bloquea el arranque.
+
+## Funcionamiento
+
+Al iniciar, el sistema permanece en IDLE. Cuando recibe START, pasa a RUNNING y activa el motor. Al recibir TIMEOUT, vuelve a IDLE.
+
+Si se activa la emergencia, pasa a FAULT. Para reiniciar, primero se debe liberar el interruptor y luego enviar RESET.
