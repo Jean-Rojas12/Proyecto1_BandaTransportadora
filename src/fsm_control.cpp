@@ -9,10 +9,10 @@ static Estado estadoActual = Estado::IDLE;
 // Velocidad del motor
 constexpr uint16_t VELOCIDAD_MOTOR = 700;
 
-// Acciones de la banda
+// Funciones de control
 void accionReposo() {
     motorLibre();
-    Serial.println("Banda en reposo");
+    Serial.println("Banda detenida");
 }
 
 void accionArrancar() {
@@ -22,76 +22,81 @@ void accionArrancar() {
 
 void accionFalla() {
     motorStop();
-    Serial.println("Paro de emergencia activado");
+    Serial.println("Emergencia activada");
 }
-
 
 void accionReiniciar() {
     motorStop();
-    Serial.println("Emergencia liberada");
-    Serial.println("Sistema listo para un nuevo arranque");
+    Serial.println("Sistema reiniciado");
 }
 
-
-// Accion que no modifica el motor
+// No realizar ninguna accion
 static void sinAccion() {
 }
 
 // Matriz de transiciones
-// Filas: estados
-// Columnas: eventos
-static constexpr Transition matrizFSM[3][4] = {
+// Columnas: NONE, START, EMERGENCY, TIMEOUT, RESET
+static constexpr Transition matrizFSM[3][5] = {
 
-    // Estado IDLE
+    // IDLE
     {
-        {Estado::IDLE, sinAccion},       // NONE
-        {Estado::RUNNING, accionArrancar}, // BTN_PRESS
-        {Estado::IDLE, sinAccion},       // TIMEOUT
-        {Estado::IDLE, accionReposo}    // RESET
+        {Estado::IDLE, sinAccion},
+        {Estado::RUNNING, accionArrancar},
+        {Estado::FAULT, accionFalla},
+        {Estado::IDLE, sinAccion},
+        {Estado::IDLE, accionReposo}
     },
 
-    // Estado RUNNING
+    // RUNNING
     {
-        {Estado::RUNNING, sinAccion},    // NONE
-        {Estado::FAULT, accionFalla},   // BTN_PRESS
-        {Estado::IDLE, accionReposo},   // TIMEOUT
-        {Estado::IDLE, accionReiniciar}  // RESET
+        {Estado::RUNNING, sinAccion},
+        {Estado::RUNNING, sinAccion},
+        {Estado::FAULT, accionFalla},
+        {Estado::IDLE, accionReposo},
+        {Estado::IDLE, accionReiniciar}
     },
 
-    // Estado FAULT
+    // FAULT
     {
-        {Estado::FAULT, sinAccion},     // NONE
-        {Estado::FAULT, sinAccion},     // BTN_PRESS
-        {Estado::FAULT, sinAccion},     // TIMEOUT
-        {Estado::IDLE, accionReiniciar} // RESET
+        {Estado::FAULT, sinAccion},
+        {Estado::FAULT, sinAccion},
+        {Estado::FAULT, accionFalla},
+        {Estado::FAULT, sinAccion},
+        {Estado::IDLE, accionReiniciar}
     }
 };
 
-// Inicializar la maquina de estados
+// Inicializar la FSM
 void fsmInit() {
     estadoActual = Estado::IDLE;
     accionReposo();
 }
 
-// Procesar un evento
+// Procesar evento mediante matriz
 void fsmProcesar(Evento evento) {
 
-    uint8_t fila = static_cast<uint8_t>(estadoActual);
-    uint8_t columna = static_cast<uint8_t>(evento);
+    const uint8_t fila =
+        static_cast<uint8_t>(estadoActual);
 
-    // Verificar que los indices sean validos
-    if (fila >= 3 || columna >= 4) {
+    const uint8_t columna =
+        static_cast<uint8_t>(evento);
+
+    if (fila >= static_cast<uint8_t>(Estado::TOTAL_ESTADOS) ||
+        columna >= static_cast<uint8_t>(Evento::TOTAL_EVENTOS)) {
         return;
     }
 
-    // Buscar la transicion en la matriz
     const Transition &transicion = matrizFSM[fila][columna];
 
-    // Actualizar estado
-    estadoActual = transicion.siguienteEstado;
-
-    // Ejecutar accion correspondiente
-    transicion.accion();
+    // Ejecutar primero la accion de seguridad
+    if (evento == Evento::EMERGENCY) {
+        transicion.accion();
+        estadoActual = transicion.siguienteEstado;
+    }
+    else {
+        estadoActual = transicion.siguienteEstado;
+        transicion.accion();
+    }
 }
 
 // Consultar estado actual

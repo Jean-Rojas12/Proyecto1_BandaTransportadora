@@ -7,18 +7,19 @@
 #include "hal_motor.h"
 #include "fsm_control.h"
 
-// Pin del interruptor de emergencia
+// Configuracion del interruptor
 constexpr uint8_t PIN_EMERGENCIA = 33;
 
-// Tiempo antirrebote: 25 ms a 160 MHz
+// 25 ms a 160 MHz
 constexpr uint32_t REBOTE_CICLOS = 4000000UL;
 
-// Variables compartidas con la interrupcion
+// Variables compartidas con la ISR
 volatile bool eventoEmergencia = false;
 volatile uint32_t contadorPulsaciones = 0;
 volatile uint32_t ultimoCiclo = 0;
+volatile bool primeraPulsacion = true;
 
-// Spinlock para proteger las variables
+// Proteccion entre los dos nucleos
 portMUX_TYPE spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 // Interrupcion del paro de emergencia
@@ -28,10 +29,14 @@ void IRAM_ATTR emergenciaISR() {
 
     portENTER_CRITICAL_ISR(&spinlock);
 
-    if ((uint32_t)(cicloActual - ultimoCiclo)
-        >= REBOTE_CICLOS) {
+    uint32_t diferencia = cicloActual - ultimoCiclo;
+
+    if (primeraPulsacion ||
+        diferencia >= REBOTE_CICLOS) {
 
         ultimoCiclo = cicloActual;
+        primeraPulsacion = false;
+
         eventoEmergencia = true;
         contadorPulsaciones++;
     }
@@ -39,21 +44,65 @@ void IRAM_ATTR emergenciaISR() {
     portEXIT_CRITICAL_ISR(&spinlock);
 }
 
-// Inicializacion del sistema
+// Consultar si existe una emergencia
+bool emergenciaActiva() {
+
+    if (digitalRead(PIN_EMERGENCIA) == LOW) {
+        return true;
+    }
+
+    bool pendiente;
+
+    portENTER_CRITICAL(&spinlock);
+    pendiente = eventoEmergencia;
+    portEXIT_CRITICAL(&spinlock);
+
+    return pendiente;
+}
+
+// Procesar emergencia pendiente
+void revisarEmergencia() {
+
+    bool pendiente;
+    uint32_t pulsaciones;
+
+    portENTER_CRITICAL(&spinlock);
+
+    pendiente = eventoEmergencia;
+    eventoEmergencia = false;
+    pulsaciones = contadorPulsaciones;
+
+    portEXIT_CRITICAL(&spinlock);
+
+    if (pendiente ||
+        digitalRead(PIN_EMERGENCIA) == LOW) {
+
+        if (fsmObtenerEstado() != Estado::FAULT) {
+
+            fsmProcesar(Evento::EMERGENCY);
+
+            Serial.println("PARO DE EMERGENCIA");
+            Serial.print("Pulsaciones: ");
+            Serial.println(pulsaciones);
+        }
+    }
+}
+
+// Inicializacion
 void setup() {
 
     Serial.begin(115200);
 
-    // Configurar interruptor
     pinMode(PIN_EMERGENCIA, INPUT_PULLUP);
 
-    // Inicializar motor
     motorInit();
-
-    // Inicializar maquina de estados
     fsmInit();
 
-    // Configurar interrupcion
+    // Verificar el interruptor antes de habilitarlo
+    if (digitalRead(PIN_EMERGENCIA) == LOW) {
+        fsmProcesar(Evento::EMERGENCY);
+    }
+
     attachInterrupt(
         digitalPinToInterrupt(PIN_EMERGENCIA),
         emergenciaISR,
@@ -64,94 +113,78 @@ void setup() {
     Serial.println("A = Arrancar banda");
     Serial.println("P = Parar banda");
     Serial.println("R = Reiniciar sistema");
-
-    // Verificar emergencia al encender
-    if (digitalRead(PIN_EMERGENCIA) == LOW) {
-        fsmProcesar(Evento::EMERGENCY);
-    }
 }
 
-// Bucle principal
+// Programa principal
 void loop() {
 
-    bool emergenciaPendiente = false;
-    uint32_t totalPulsaciones = 0;
+    // Dar prioridad a la emergencia
+    revisarEmergencia();
 
-    // Leer variables de forma segura
-    portENTER_CRITICAL(&spinlock);
-
-    emergenciaPendiente = eventoEmergencia;
-    eventoEmergencia = false;
-    totalPulsaciones = contadorPulsaciones;
-
-    portEXIT_CRITICAL(&spinlock);
-
-    // Comprobar paro de emergencia
-    if (emergenciaPendiente ||
-        digitalRead(PIN_EMERGENCIA) == LOW) {
-
-        if (fsmObtenerEstado() != Estado::FAULT) {
-
-            fsmProcesar(Evento::EMERGENCY);
-
-            Serial.print("Total de pulsaciones: ");
-            Serial.println(totalPulsaciones);
-        }
-    }
-
-    // Leer comandos del monitor serial
+    // Leer comandos sin bloquear
     if (Serial.available() > 0) {
 
         char comando = Serial.read();
 
         switch (comando) {
 
-            // Arrancar banda
             case 'A':
             case 'a':
 
-                if (digitalRead(PIN_EMERGENCIA) == LOW) {
-                    fsmProcesar(Evento::EMERGENCY);
+                if (emergenciaActiva()) {
+
+                    revisarEmergencia();
+
                     Serial.println(
-                        "No se puede arrancar: emergencia activa"
+                        "Arranque bloqueado por emergencia"
                     );
                 }
                 else if (fsmObtenerEstado() == Estado::FAULT) {
+
                     Serial.println(
-                        "Debe reiniciar el sistema primero"
+                        "Reinicie antes de arrancar"
                     );
                 }
                 else if (fsmObtenerEstado() == Estado::IDLE) {
+
                     fsmProcesar(Evento::START);
                 }
                 else {
+
                     Serial.println(
-                        "La banda ya esta funcionando"
+                        "La banda ya esta encendida"
                     );
                 }
 
                 break;
 
-            // Parar banda
             case 'P':
             case 'p':
 
                 if (fsmObtenerEstado() == Estado::RUNNING) {
+
                     fsmProcesar(Evento::TIMEOUT);
                 }
 
                 break;
 
-            // Reiniciar sistema
             case 'R':
             case 'r':
 
-                if (digitalRead(PIN_EMERGENCIA) == HIGH) {
-                    fsmProcesar(Evento::RESET);
-                }
-                else {
+                if (emergenciaActiva()) {
+
+                    revisarEmergencia();
+
                     Serial.println(
-                        "Libere la emergencia"
+                        "No se puede reiniciar"
+                    );
+                }
+                else if (fsmObtenerEstado() == Estado::FAULT) {
+
+                    fsmProcesar(Evento::RESET);
+
+                    Serial.println(
+                        "Sistema listo para arrancar"
                     );
                 }
 
@@ -161,4 +194,7 @@ void loop() {
                 break;
         }
     }
+
+    // Segunda comprobacion de emergencia
+    revisarEmergencia();
 }
